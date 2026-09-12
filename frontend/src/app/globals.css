@@ -1,0 +1,50 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f5f7f4;
+  --foreground: #1f2924;
+  --ink-muted: #718078;
+  --line: #e4e9e4;
+  --green: #226b4c;
+  --green-soft: #e4f2e9;
+  --cream: #fbfaf5;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: "SF Pro Display", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: "SF Pro Display", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  margin: 0;
+  overflow-x: hidden;
+}
+
+button, input, select { font: inherit; }
+.display-font { font-family: "SF Pro Display", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; }
+::selection { background: #cfe8d8; color: #173d2b; }
+.app-grid { min-width: 0; overflow-x: hidden; background-image: linear-gradient(to right, rgba(34, 107, 76, .035) 1px, transparent 1px), linear-gradient(to bottom, rgba(34, 107, 76, .035) 1px, transparent 1px); background-size: 32px 32px; }
+
+@keyframes mobile-drawer-in {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes mobile-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (max-width: 767px) {
+  header > div:first-child .text-\[10px\] { display: none; }
+  header > div:last-child > button:last-child { width: 40px; padding: 0.625rem; font-size: 0; }
+  header > div:last-child > button:last-child::after { content: "+"; font-size: 1.25rem; line-height: 1; }
+  .app-grid > aside.fixed { animation: mobile-drawer-in 180ms ease-out both; }
+  .app-grid > button.fixed { animation: mobile-backdrop-in 180ms ease-out both; }
+}
