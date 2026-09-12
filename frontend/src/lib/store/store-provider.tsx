@@ -2,13 +2,11 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 
 import { createContext, useContext, useEffect, useMemo, useState, useCallback } from "react";
-import { initialCategories, initialProducts, initialSales } from "@/lib/mock-data";
 import type {
   Category,
   DashboardMetrics,
   InventoryMovement,
   LocalNotification,
-  NotificationType,
   PaymentMethod,
   Product,
   Sale,
@@ -57,37 +55,15 @@ const isThisMonth = (date: string) => {
   return value.getMonth() === current.getMonth() && value.getFullYear() === current.getFullYear();
 };
 
-const makeNotification = (
-  type: NotificationType,
-  title: string,
-  message: string,
-  relatedProductId?: string,
-  relatedSaleId?: string
-): LocalNotification => ({
-  id: `notification-${Date.now()}-${Math.random()}`,
-  type,
-  title,
-  message,
-  createdAt: new Date().toISOString(),
-  isRead: false,
-  relatedProductId,
-  relatedSaleId,
-});
-
-const initialNotifications: LocalNotification[] = [
-  makeNotification("LOW_STOCK", "Low stock", "Maggi is running low. 8 units remaining.", "p2"),
-];
-
 export function StoreProvider({ children }: { children: React.ReactNode }) {
-  const [products, setProducts] = useState<Product[]>(initialProducts);
-  const [categories, setCategories] = useState<Category[]>(initialCategories);
-  const [sales, setSales] = useState<Sale[]>(initialSales);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [sales, setSales] = useState<Sale[]>([]);
   const [movements, setMovements] = useState<InventoryMovement[]>([]);
-  const [notifications, setNotifications] = useState<LocalNotification[]>(initialNotifications);
+  const [notifications, setNotifications] = useState<LocalNotification[]>([]);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [isLiveSupabase, setIsLiveSupabase] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const [ready, setReady] = useState(false);
 
   // Helper to load live Supabase data
   const loadSupabaseData = useCallback(async () => {
@@ -102,11 +78,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           services.getCurrentProfile(),
         ]);
 
-      if (fetchedCategories.length > 0) setCategories(fetchedCategories);
-      if (fetchedProducts.length > 0) setProducts(fetchedProducts);
-      setSales(fetchedSales);
-      setMovements(fetchedMovements);
-      if (fetchedNotifications.length > 0) setNotifications(fetchedNotifications);
+      setCategories(fetchedCategories || []);
+      setProducts(fetchedProducts || []);
+      setSales(fetchedSales || []);
+      setMovements(fetchedMovements || []);
+      setNotifications(fetchedNotifications || []);
       if (profile) setUserProfile(profile);
     } catch (err) {
       console.error("Failed to load Supabase data:", err);
@@ -116,63 +92,66 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   // Initial check: Supabase connection & auth
   useEffect(() => {
     let channel: ReturnType<NonNullable<ReturnType<typeof createClient>>["channel"]> | null = null;
+    let authUnsubscribe: (() => void) | null = null;
 
     async function initialize() {
       setIsLoading(true);
+
+      // Purge any legacy dummy mock cache
+      try {
+        localStorage.removeItem(storageKey);
+      } catch {
+        /* ignore */
+      }
+
       const supabase = createClient();
 
       if (supabase) {
+        setIsLiveSupabase(true);
         const { data: { user } } = await supabase.auth.getUser();
+
         if (user) {
-          setIsLiveSupabase(true);
           await loadSupabaseData();
-
-          // Set up Supabase Realtime channel for live updates
-          channel = supabase
-            .channel("mallu-mart-realtime")
-            .on("postgres_changes", { event: "*", schema: "public", table: "products" }, () => {
-              loadSupabaseData();
-            })
-            .on("postgres_changes", { event: "*", schema: "public", table: "sales" }, () => {
-              loadSupabaseData();
-            })
-            .on("postgres_changes", { event: "*", schema: "public", table: "categories" }, () => {
-              loadSupabaseData();
-            })
-            .on("postgres_changes", { event: "*", schema: "public", table: "notifications" }, () => {
-              loadSupabaseData();
-            })
-            .subscribe();
-
-          setIsLoading(false);
-          setReady(true);
-          return;
         }
+
+        // Set up Supabase Realtime channel for live updates
+        channel = supabase
+          .channel("mallu-mart-realtime")
+          .on("postgres_changes", { event: "*", schema: "public", table: "products" }, () => {
+            loadSupabaseData();
+          })
+          .on("postgres_changes", { event: "*", schema: "public", table: "sales" }, () => {
+            loadSupabaseData();
+          })
+          .on("postgres_changes", { event: "*", schema: "public", table: "categories" }, () => {
+            loadSupabaseData();
+          })
+          .on("postgres_changes", { event: "*", schema: "public", table: "notifications" }, () => {
+            loadSupabaseData();
+          })
+          .subscribe();
+
+        // Listen for login/logout state changes
+        const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+          if (session?.user) {
+            await loadSupabaseData();
+          } else {
+            setUserProfile(null);
+            setProducts([]);
+            setCategories([]);
+            setSales([]);
+            setMovements([]);
+            setNotifications([]);
+          }
+        });
+        authUnsubscribe = authListener.subscription.unsubscribe;
+
+        setIsLoading(false);
+        return;
       }
 
-      // Demo fallback mode with localStorage
-      const saved = localStorage.getItem(storageKey);
-      if (saved) {
-        try {
-          const data = JSON.parse(saved) as {
-            products: Product[];
-            categories: Category[];
-            sales: Sale[];
-            movements: InventoryMovement[];
-            notifications?: LocalNotification[];
-          };
-          if (data.products?.length) setProducts(data.products);
-          if (data.categories?.length) setCategories(data.categories);
-          if (data.sales) setSales(data.sales);
-          if (data.movements) setMovements(data.movements);
-          if (data.notifications) setNotifications(data.notifications);
-        } catch (e) {
-          console.error("Failed to parse local demo store", e);
-        }
-      }
       setIsLiveSupabase(false);
       setIsLoading(false);
-      setReady(true);
     }
 
     initialize();
@@ -182,15 +161,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         const supabase = createClient();
         if (supabase) supabase.removeChannel(channel);
       }
+      if (authUnsubscribe) {
+        authUnsubscribe();
+      }
     };
   }, [loadSupabaseData]);
-
-  // Persist demo mode changes to localStorage
-  useEffect(() => {
-    if (ready && !isLiveSupabase) {
-      localStorage.setItem(storageKey, JSON.stringify({ products, categories, sales, movements, notifications }));
-    }
-  }, [products, categories, sales, movements, notifications, ready, isLiveSupabase]);
 
   // Metrics computation
   const metrics = useMemo(() => {
@@ -226,258 +201,92 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     });
   }, [sales]);
 
-  // CRUD & Store Handlers
+  // CRUD & Store Handlers directly interacting with Backend
   const createProduct = async (input: Omit<Product, "id" | "isActive">) => {
-    if (isLiveSupabase) {
-      const res = await services.createProduct(input);
-      if (res.ok) {
-        await loadSupabaseData();
-      }
-      return;
+    const res = await services.createProduct(input);
+    if (res.ok) {
+      await loadSupabaseData();
     }
-    setProducts((current) => [{ ...input, id: `p-${Date.now()}`, isActive: true }, ...current]);
   };
 
   const updateProduct = async (id: string, input: Partial<Product>) => {
-    if (isLiveSupabase) {
-      const res = await services.updateProduct(id, input);
-      if (res.ok) {
-        await loadSupabaseData();
-      }
-      return;
+    const res = await services.updateProduct(id, input);
+    if (res.ok) {
+      await loadSupabaseData();
     }
-    setProducts((current) =>
-      current.map((product) => (product.id === id ? { ...product, ...input } : product))
-    );
   };
 
   const archiveProduct = async (id: string) => {
-    if (isLiveSupabase) {
-      const res = await services.archiveProduct(id);
-      if (res.ok) {
-        await loadSupabaseData();
-      }
-      return;
+    const res = await services.archiveProduct(id);
+    if (res.ok) {
+      await loadSupabaseData();
     }
-    setProducts((current) =>
-      current.map((product) => (product.id === id ? { ...product, isActive: false } : product))
-    );
   };
 
   const addStock = async (id: string, quantity: number, notes: string = "") => {
-    if (isLiveSupabase) {
-      const res = await services.adjustProductStock(id, quantity, "purchase", notes);
-      if (res.ok) {
-        await loadSupabaseData();
-      }
-      return;
-    }
-    const product = products.find((item) => item.id === id);
-    setProducts((current) =>
-      current.map((item) => (item.id === id ? { ...item, stockQuantity: item.stockQuantity + quantity } : item))
-    );
-    setMovements((current) => [
-      {
-        id: `move-${Date.now()}`,
-        productId: id,
-        movementType: "purchase",
-        quantity,
-        createdAt: new Date().toISOString(),
-        notes,
-      },
-      ...current,
-    ]);
-    if (product) {
-      setNotifications((current) => [
-        makeNotification("STOCK_ADDED", "Stock updated", `${quantity} units added to ${product.name}.`, id),
-        ...current,
-      ]);
+    const res = await services.adjustProductStock(id, quantity, "purchase", notes);
+    if (res.ok) {
+      await loadSupabaseData();
     }
   };
 
   const createCategory = async (name: string) => {
-    if (isLiveSupabase) {
-      const res = await services.createCategory(name);
-      if (res.ok) {
-        await loadSupabaseData();
-      }
-      return;
+    const res = await services.createCategory(name);
+    if (res.ok) {
+      await loadSupabaseData();
     }
-    setCategories((current) => [...current, { id: `cat-${Date.now()}`, name, createdAt: new Date().toISOString() }]);
   };
 
   const renameCategory = async (id: string, name: string) => {
-    if (isLiveSupabase) {
-      const res = await services.renameCategory(id, name);
-      if (res.ok) {
-        await loadSupabaseData();
-      }
-      return;
-    }
-    const oldName = categories.find((category) => category.id === id)?.name;
-    setCategories((current) =>
-      current.map((category) => (category.id === id ? { ...category, name } : category))
-    );
-    if (oldName) {
-      setProducts((current) =>
-        current.map((product) => (product.category === oldName ? { ...product, category: name } : product))
-      );
+    const res = await services.renameCategory(id, name);
+    if (res.ok) {
+      await loadSupabaseData();
     }
   };
 
   const deleteCategory = async (id: string): Promise<boolean> => {
-    if (isLiveSupabase) {
-      const res = await services.deleteCategory(id);
-      if (res.ok) {
-        await loadSupabaseData();
-        return true;
-      }
-      return false;
+    const res = await services.deleteCategory(id);
+    if (res.ok) {
+      await loadSupabaseData();
+      return true;
     }
-    const category = categories.find((item) => item.id === id);
-    if (!category || products.some((product) => product.category === category.name && product.isActive)) {
-      return false;
-    }
-    setCategories((current) => current.filter((item) => item.id !== id));
-    return true;
+    return false;
   };
 
   const createSale = async (
     lines: CartLine[],
     paymentMethod: PaymentMethod
   ): Promise<{ ok: boolean; message: string }> => {
-    if (isLiveSupabase) {
-      const res = await services.recordSale(lines, paymentMethod);
-      if (res.ok) {
-        await loadSupabaseData();
-      }
-      return res;
+    const res = await services.recordSale(lines, paymentMethod);
+    if (res.ok) {
+      await loadSupabaseData();
     }
-
-    // Demo Mode Logic
-    const available = products.filter((product) => product.isActive);
-    for (const line of lines) {
-      const product = available.find((item) => item.id === line.productId);
-      if (!product) return { ok: false, message: "Product is unavailable." };
-      if (line.quantity < 1) return { ok: false, message: "Quantity must be positive." };
-      if (line.quantity > product.stockQuantity)
-        return { ok: false, message: `Only ${product.stockQuantity} units available for ${product.name}.` };
-    }
-
-    const saleItems: SaleItem[] = lines.map((line) => {
-      const product = available.find((item) => item.id === line.productId)!;
-      return {
-        id: `item-${Date.now()}-${line.productId}`,
-        productId: product.id,
-        productName: product.name,
-        quantity: line.quantity,
-        sellingPrice: product.sellingPrice,
-        costPrice: product.costPrice,
-        totalAmount: product.sellingPrice * line.quantity,
-        totalCost: product.costPrice * line.quantity,
-      };
-    });
-
-    const totalAmount = saleItems.reduce((sum, item) => sum + item.totalAmount, 0);
-    const totalCost = saleItems.reduce((sum, item) => sum + item.totalCost, 0);
-    const createdAt = new Date().toISOString();
-    const sale: Sale = {
-      id: `MM-${Date.now().toString().slice(-5)}`,
-      totalAmount,
-      totalCost,
-      grossProfit: totalAmount - totalCost,
-      paymentMethod,
-      createdAt,
-      items: saleItems.reduce((sum, item) => sum + item.quantity, 0),
-      saleItems,
-    };
-
-    setSales((current) => [sale, ...current]);
-    setProducts((current) =>
-      current.map((product) => {
-        const line = lines.find((item) => item.productId === product.id);
-        return line ? { ...product, stockQuantity: product.stockQuantity - line.quantity } : product;
-      })
-    );
-
-    const newMovements: InventoryMovement[] = lines.map((line) => ({
-      id: `move-${Date.now()}-${line.productId}`,
-      productId: line.productId,
-      movementType: "sale",
-      quantity: -line.quantity,
-      referenceId: sale.id,
-      createdAt,
-    }));
-    setMovements((current) => [...newMovements, ...current]);
-
-    // Notifications
-    setNotifications((current) => [
-      makeNotification(
-        "SALE_RECORDED",
-        "Sale recorded",
-        `₹${totalAmount.toLocaleString("en-IN")} sale recorded via ${paymentMethod}.`,
-        undefined,
-        sale.id
-      ),
-      ...current,
-    ]);
-
-    lines.forEach((line) => {
-      const before = products.find((product) => product.id === line.productId);
-      const after = before ? before.stockQuantity - line.quantity : 0;
-      if (after === 0) {
-        setNotifications((current) => [
-          makeNotification("OUT_OF_STOCK", "Out of stock", `${before?.name ?? "Product"} is out of stock.`, line.productId),
-          ...current,
-        ]);
-      } else if (before && before.stockQuantity > before.minimumStock && after <= before.minimumStock) {
-        setNotifications((current) => [
-          makeNotification("LOW_STOCK", "Low stock", `${before.name} is running low. ${after} units remaining.`, line.productId),
-          ...current,
-        ]);
-      }
-    });
-
-    return { ok: true, message: "Sale recorded successfully." };
+    return res;
   };
 
   const markNotificationAsRead = async (id: string) => {
-    if (isLiveSupabase) {
-      await services.markNotificationRead(id);
-      setNotifications((current) =>
-        current.map((notification) => (notification.id === id ? { ...notification, isRead: true } : notification))
-      );
-      return;
-    }
+    await services.markNotificationRead(id);
     setNotifications((current) =>
       current.map((notification) => (notification.id === id ? { ...notification, isRead: true } : notification))
     );
   };
 
   const markAllNotificationsAsRead = async () => {
-    if (isLiveSupabase) {
-      await services.markAllNotificationsRead();
-      setNotifications((current) => current.map((notification) => ({ ...notification, isRead: true })));
-      return;
-    }
+    await services.markAllNotificationsRead();
     setNotifications((current) => current.map((notification) => ({ ...notification, isRead: true })));
   };
 
   const clearNotifications = async () => {
-    if (isLiveSupabase) {
-      await services.clearNotifications();
-      setNotifications([]);
-      return;
-    }
+    await services.clearNotifications();
     setNotifications([]);
   };
 
   const resetDemo = () => {
-    setProducts(initialProducts);
-    setCategories(initialCategories);
-    setSales(initialSales);
+    setProducts([]);
+    setCategories([]);
+    setSales([]);
     setMovements([]);
-    setNotifications(initialNotifications);
+    setNotifications([]);
   };
 
   const store: StoreContextType = {
@@ -515,6 +324,5 @@ export function useStore() {
   return store;
 }
 
-// Backward compatibility with previous code imports
 export const useMockStore = useStore;
 export const MockStoreProvider = StoreProvider;
