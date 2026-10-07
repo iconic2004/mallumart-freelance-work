@@ -1,13 +1,12 @@
 "use client";
 /* eslint-disable @typescript-eslint/no-unused-vars */
-/* eslint-disable react-hooks/set-state-in-effect */
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, FormEvent } from "react";
+import { useEffect, useState, useMemo, FormEvent } from "react";
 import { useStore } from "@/lib/store/store-provider";
 import type { PaymentMethod, Product, Sale } from "@/lib/types";
-import { exportExcelReport, type ReportPeriod } from "@/lib/report-export";
+import { exportExcelReport, type ReportPeriod, inPeriod } from "@/lib/report-export";
 import { signOut, updatePassword } from "@/lib/supabase/services/auth";
 
 const nav = [
@@ -29,6 +28,36 @@ const statusOf = (product: Product) =>
     : "In stock";
 const dateLabel = (value: string) =>
   new Date(value).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" });
+
+function getTimeGreeting(): string {
+  const hour = new Date().getHours();
+  if (hour >= 5 && hour < 12) return "Good morning";
+  if (hour >= 12 && hour < 17) return "Good afternoon";
+  if (hour >= 17 && hour < 21) return "Good evening";
+  return "Good night";
+}
+
+function LoadingSkeleton() {
+  return (
+    <div className="animate-pulse space-y-6 px-5 py-8 md:px-9 lg:py-10">
+      <div className="h-8 w-64 rounded-xl bg-[#e4e9e4]" />
+      <div className="h-4 w-48 rounded-lg bg-[#e4e9e4]" />
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {[1,2,3,4].map(i => (
+          <div key={i} className="rounded-2xl border border-[#e4e9e4] bg-white p-5">
+            <div className="h-3 w-24 rounded bg-[#e4e9e4]" />
+            <div className="mt-4 h-7 w-32 rounded-lg bg-[#e4e9e4]" />
+            <div className="mt-3 h-3 w-20 rounded bg-[#e4e9e4]" />
+          </div>
+        ))}
+      </div>
+      <div className="grid gap-5 xl:grid-cols-2">
+        <div className="rounded-2xl border border-[#e4e9e4] bg-white p-5 h-64" />
+        <div className="rounded-2xl border border-[#e4e9e4] bg-[#f4f8f3] p-5 h-64" />
+      </div>
+    </div>
+  );
+}
 
 type ToastFn = (message: string) => void;
 
@@ -73,27 +102,21 @@ function Sidebar({ active }: { active: string }) {
       <div className="mt-10 rounded-2xl border border-[#e4e9e4] bg-[#f4f8f3] p-4">
         <div className="flex items-center justify-between">
           <span className="text-[10px] font-bold uppercase tracking-[.15em] text-[#226b4c]">
-            {store.isLiveSupabase ? "Supabase Live" : "Demo Workspace"}
+            Supabase Live
           </span>
           <span
-            className={`inline-block h-2 w-2 rounded-full ${
-              store.isLiveSupabase ? "bg-[#226b4c] animate-pulse" : "bg-amber-500"
-            }`}
+            className="inline-block h-2 w-2 rounded-full bg-[#226b4c] animate-pulse"
           />
         </div>
         <div className="mt-2 text-xs font-semibold text-[#1f2924]">
-          {store.isLiveSupabase ? "Cloud Realtime Active" : "Local In-Browser Mode"}
+          Cloud Realtime Active
         </div>
         <div className="mt-1 text-[11px] text-[#718078]">
-          {store.isLiveSupabase
-            ? `${store.products.length} products synced`
-            : "Connect Supabase in .env.local"}
+          {`${store.products.length} products synced`}
         </div>
         <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white">
           <div
-            className={`h-full rounded-full transition-all duration-500 ${
-              store.isLiveSupabase ? "bg-[#226b4c] w-full" : "bg-amber-400 w-[60%]"
-            }`}
+            className="h-full rounded-full transition-all duration-500 bg-[#226b4c] w-full"
           />
         </div>
       </div>
@@ -150,18 +173,12 @@ function Header({
           <span className="font-semibold text-[#1f2924]">{active}</span>
 
           <span
-            className={`ml-3 inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ${
-              store.isLiveSupabase
-                ? "bg-[#e4f2e9] text-[#226b4c]"
-                : "bg-amber-50 text-amber-700 border border-amber-200"
-            }`}
+            className="ml-3 inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold bg-[#e4f2e9] text-[#226b4c]"
           >
             <span
-              className={`h-1.5 w-1.5 rounded-full ${
-                store.isLiveSupabase ? "bg-[#226b4c]" : "bg-amber-500"
-              }`}
+              className="h-1.5 w-1.5 rounded-full bg-[#226b4c]"
             />
-            {store.isLiveSupabase ? "Supabase Live" : "Demo Mode"}
+            Supabase Live
           </span>
         </div>
 
@@ -516,16 +533,33 @@ function SaleModal({
   close: () => void;
   complete: (lines: { productId: string; quantity: number }[], method: PaymentMethod) => void;
 }) {
-  const [productId, setProductId] = useState(products[0]?.id ?? "");
+  // Filter out zero-stock products from sale selection
+  const sellableProducts = products.filter((p) => p.stockQuantity > 0);
+  const [productId, setProductId] = useState(sellableProducts[0]?.id ?? "");
   const [quantity, setQuantity] = useState(1);
   const [method, setMethod] = useState<PaymentMethod>("Cash");
   const [lines, setLines] = useState<{ productId: string; quantity: number }[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [saleError, setSaleError] = useState("");
 
-  const product = products.find((item) => item.id === productId);
+  const product = sellableProducts.find((item) => item.id === productId);
+
+  // Calculate remaining stock after accounting for items already in cart
+  const getAvailableStock = (pid: string) => {
+    const p = products.find((item) => item.id === pid);
+    if (!p) return 0;
+    const inCart = lines.find((line) => line.productId === pid)?.quantity ?? 0;
+    return p.stockQuantity - inCart;
+  };
 
   const add = () => {
     if (!product || quantity < 1) return;
+    setSaleError("");
+    const available = getAvailableStock(productId);
+    if (quantity > available) {
+      setSaleError(`Only ${available} units of ${product.name} available (${product.stockQuantity} in stock, ${product.stockQuantity - available} already in cart).`);
+      return;
+    }
     setLines((current) => {
       const existing = current.find((line) => line.productId === productId);
       return existing
@@ -542,8 +576,11 @@ function SaleModal({
 
   const handleConfirm = async () => {
     setSubmitting(true);
+    setSaleError("");
     try {
       await complete(lines, method);
+    } catch (err) {
+      setSaleError(err instanceof Error ? err.message : "Sale failed. Please try again.");
     } finally {
       setSubmitting(false);
     }
@@ -571,15 +608,18 @@ function SaleModal({
             onChange={(event) => setProductId(event.target.value)}
             className="min-w-0 flex-1 rounded-xl border border-[#dfe7df] bg-white px-3 py-2.5 text-sm"
           >
-            {products.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.name} ({item.stockQuantity} left) - ₹{item.sellingPrice}
-              </option>
-            ))}
+            {sellableProducts.map((item) => {
+              const avail = getAvailableStock(item.id);
+              return (
+                <option key={item.id} value={item.id} disabled={avail <= 0}>
+                  {item.name} ({avail} available) - ₹{item.sellingPrice}
+                </option>
+              );
+            })}
           </select>
           <input
             min={1}
-            max={product?.stockQuantity ?? 1}
+            max={getAvailableStock(productId)}
             type="number"
             value={quantity}
             onChange={(event) => setQuantity(Math.max(1, Number(event.target.value)))}
@@ -593,6 +633,11 @@ function SaleModal({
             Add
           </button>
         </div>
+        {saleError && (
+          <div className="mt-2 rounded-xl border border-[#f5c6cb] bg-[#fff0ed] px-3.5 py-2.5 text-xs font-medium text-[#c25e4a]">
+            {saleError}
+          </div>
+        )}
 
         <div className="mt-4 max-h-48 space-y-2 overflow-y-auto">
           {lines.length === 0 && (
@@ -637,8 +682,14 @@ function SaleModal({
           <b className="text-xl">{money(total)}</b>
         </div>
 
+        {sellableProducts.length === 0 && (
+          <div className="mt-3 rounded-xl border border-dashed border-[#dfe7df] p-4 text-center text-xs text-[#87948c]">
+            No products with available stock. Please restock inventory first.
+          </div>
+        )}
+
         <button
-          disabled={!lines.length || submitting}
+          disabled={!lines.length || submitting || sellableProducts.length === 0}
           onClick={handleConfirm}
           className="mt-6 w-full rounded-xl bg-[#226b4c] px-4 py-3 font-semibold text-white shadow-sm transition hover:bg-[#1a553c] disabled:opacity-50"
         >
@@ -651,16 +702,22 @@ function SaleModal({
 
 function Dashboard({ username, exportReport }: { username: string; exportReport: () => void }) {
   const { metrics, sales, paymentBreakdown, isLiveSupabase } = useStore();
+  const [greeting, setGreetingText] = useState(getTimeGreeting());
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setGreetingText(getTimeGreeting()), 60_000);
+    return () => window.clearInterval(interval);
+  }, []);
 
   return (
     <>
       <div className="mb-8 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
           <div className="mb-2 text-xs font-semibold uppercase tracking-[.18em] text-[#6a987b]">
-            {isLiveSupabase ? "Supabase Live Workspace" : "Local Demo Workspace"}
+            Supabase Live Workspace
           </div>
           <h1 className="display-font text-3xl sm:text-4xl font-bold">
-            Good morning, {username}
+            {greeting}, {username}
             <span className="text-[#226b4c]">.</span>
           </h1>
           <p className="mt-2 text-sm text-[#718078]">
@@ -1014,20 +1071,59 @@ function Reports() {
   const [period, setPeriod] = useState<ReportPeriod>("this-month");
   const [exporting, setExporting] = useState(false);
 
-  const total = sales.reduce((sum, sale) => sum + sale.totalAmount, 0);
-  const productTotals = sales
-    .flatMap((sale) => sale.saleItems)
-    .reduce<Record<string, number>>((result, item) => {
-      result[item.productName] = (result[item.productName] ?? 0) + item.quantity;
-      return result;
-    }, {});
-
   const labels: Record<ReportPeriod, string> = {
     today: "Today",
     "7-days": "Last 7 days",
     "30-days": "Last 30 days",
     "this-month": "This month",
   };
+
+  // Filter sales by selected period
+  const filteredSales = useMemo(() =>
+    sales.filter((sale) => inPeriod(sale.createdAt, period)),
+    [sales, period]
+  );
+
+  const total = filteredSales.reduce((sum, sale) => sum + sale.totalAmount, 0);
+  const totalProfit = filteredSales.reduce((sum, sale) => sum + sale.grossProfit, 0);
+
+  const productTotals = filteredSales
+    .flatMap((sale) => sale.saleItems)
+    .reduce<Record<string, number>>((result, item) => {
+      result[item.productName] = (result[item.productName] ?? 0) + item.quantity;
+      return result;
+    }, {});
+
+  // Payment breakdown filtered by period
+  const filteredPaymentBreakdown = useMemo(() => {
+    const periodTotal = filteredSales.reduce((sum, sale) => sum + sale.totalAmount, 0);
+    return (["Cash", "UPI", "Card", "Other"] as PaymentMethod[]).map((method) => {
+      const amount = filteredSales
+        .filter((sale) => sale.paymentMethod === method)
+        .reduce((sum, sale) => sum + sale.totalAmount, 0);
+      return {
+        method,
+        total: amount,
+        count: filteredSales.filter((sale) => sale.paymentMethod === method).length,
+        percent: periodTotal ? Math.round((amount / periodTotal) * 100) : 0,
+      };
+    });
+  }, [filteredSales]);
+
+  // Category performance
+  const categoryPerformance = useMemo(() => {
+    const catMap: Record<string, { revenue: number; units: number }> = {};
+    filteredSales.forEach((sale) => {
+      sale.saleItems.forEach((item) => {
+        const product = products.find((p) => p.name === item.productName);
+        const cat = product?.category || "Other";
+        if (!catMap[cat]) catMap[cat] = { revenue: 0, units: 0 };
+        catMap[cat].revenue += item.totalAmount;
+        catMap[cat].units += item.quantity;
+      });
+    });
+    return Object.entries(catMap).sort((a, b) => b[1].revenue - a[1].revenue);
+  }, [filteredSales, products]);
 
   const exportReport = async () => {
     setExporting(true);
@@ -1067,16 +1163,16 @@ function Reports() {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-4">
-        <Kpi label="Gross Revenue" value={money(total)} detail="Total sales volume" />
+        <Kpi label="Gross Revenue" value={money(total)} detail={`${labels[period]} sales volume`} />
         <Kpi
           label="Total Profit"
-          value={money(sales.reduce((sum, sale) => sum + sale.grossProfit, 0))}
+          value={money(totalProfit)}
           detail="Revenue minus product cost"
         />
-        <Kpi label="Sales Count" value={`${sales.length}`} detail="Transactions recorded" />
+        <Kpi label="Sales Count" value={`${filteredSales.length}`} detail={`${labels[period]} transactions`} />
         <Kpi
           label="Average Ticket"
-          value={money(sales.length ? total / sales.length : 0)}
+          value={money(filteredSales.length ? total / filteredSales.length : 0)}
           detail="Average sale value"
         />
       </div>
@@ -1087,6 +1183,7 @@ function Reports() {
           <div className="mt-3 divide-y divide-[#f0f4ef]">
             {Object.entries(productTotals)
               .sort((a, b) => b[1] - a[1])
+              .slice(0, 10)
               .map(([name, units]) => (
                 <div key={name} className="flex justify-between py-2.5 text-sm">
                   <span>{name}</span>
@@ -1102,9 +1199,12 @@ function Reports() {
         <section className="rounded-2xl border border-[#e4e9e4] bg-white p-5 shadow-sm">
           <h2 className="font-semibold text-[#1f2924]">Payment Breakdown</h2>
           <div className="mt-3 divide-y divide-[#f0f4ef]">
-            {paymentBreakdown.map((payment) => (
+            {filteredPaymentBreakdown.map((payment) => (
               <div key={payment.method} className="flex justify-between py-2.5 text-sm">
-                <span>{payment.method}</span>
+                <span>
+                  {payment.method}
+                  <small className="ml-2 text-[#87948c]">({payment.count} txns)</small>
+                </span>
                 <b>
                   {money(payment.total)}{" "}
                   <small className="font-normal text-[#718078]">({payment.percent}%)</small>
@@ -1114,6 +1214,23 @@ function Reports() {
           </div>
         </section>
       </div>
+
+      {categoryPerformance.length > 0 && (
+        <section className="mt-6 rounded-2xl border border-[#e4e9e4] bg-white p-5 shadow-sm">
+          <h2 className="font-semibold text-[#1f2924]">Category Performance</h2>
+          <div className="mt-3 divide-y divide-[#f0f4ef]">
+            {categoryPerformance.map(([cat, data]) => (
+              <div key={cat} className="flex justify-between py-2.5 text-sm">
+                <span>
+                  <b className="text-[#1f2924]">{cat}</b>
+                  <small className="ml-2 text-[#87948c]">{data.units} units</small>
+                </span>
+                <b className="text-[#226b4c]">{money(data.revenue)}</b>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
     </>
   );
 }
@@ -1121,30 +1238,52 @@ function Reports() {
 function Categories({ notify }: { notify: ToastFn }) {
   const store = useStore();
   const [name, setName] = useState("");
+  const [showModal, setShowModal] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
-  const add = async () => {
-    if (name.trim()) {
-      await store.createCategory(name.trim());
-      setName("");
-      notify("Category added successfully");
+  const handleAddCategory = async (catName: string) => {
+    const trimmed = catName.trim();
+    if (!trimmed) {
+      notify("Please enter a category name");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const res = await store.createCategory(trimmed);
+      if (res.ok) {
+        setName("");
+        setShowModal(false);
+        notify("Category added successfully");
+      } else {
+        notify(res.error || "Failed to add category");
+      }
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "Failed to add category");
+    } finally {
+      setSubmitting(false);
     }
   };
 
   const handleRename = async (category: { id: string; name: string }) => {
     const next = window.prompt("Rename category:", category.name);
     if (next?.trim() && next.trim() !== category.name) {
-      await store.renameCategory(category.id, next.trim());
-      notify("Category renamed");
+      const res = await store.renameCategory(category.id, next.trim());
+      if (res.ok) {
+        notify("Category renamed successfully");
+      } else {
+        notify(res.error || "Failed to rename category");
+      }
     }
   };
 
   const handleDelete = async (category: { id: string; name: string }) => {
     if (window.confirm(`Delete category "${category.name}"?`)) {
-      const ok = await store.deleteCategory(category.id);
-      if (ok) {
-        notify("Category deleted");
+      const res = await store.deleteCategory(category.id);
+      if (res.ok) {
+        notify("Category deleted successfully");
       } else {
-        notify("Cannot delete: category has active products.");
+        notify(res.error || "Cannot delete: category has active products.");
       }
     }
   };
@@ -1155,23 +1294,31 @@ function Categories({ notify }: { notify: ToastFn }) {
         title="Categories"
         subtitle="Organize your store aisles, product groups, and department taxes."
         action="Add category"
-        onAction={add}
+        onAction={() => setShowModal(true)}
       />
 
-      <div className="mb-6 flex gap-2 sm:max-w-md">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          handleAddCategory(name);
+        }}
+        className="mb-6 flex gap-2 sm:max-w-md"
+      >
         <input
           value={name}
           onChange={(event) => setName(event.target.value)}
           placeholder="e.g. Spices & Condiments"
-          className="w-full rounded-xl border border-[#dfe7df] bg-white px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#b9d8c2]"
+          disabled={submitting}
+          className="w-full rounded-xl border border-[#dfe7df] bg-white px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#b9d8c2] disabled:opacity-50"
         />
         <button
-          onClick={add}
-          className="rounded-xl bg-[#226b4c] px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#1a553c]"
+          type="submit"
+          disabled={submitting}
+          className="rounded-xl bg-[#226b4c] px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#1a553c] disabled:opacity-50 shrink-0"
         >
-          Add
+          {submitting ? "Adding..." : "Add"}
         </button>
-      </div>
+      </form>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {store.categories.map((category) => (
@@ -1202,7 +1349,89 @@ function Categories({ notify }: { notify: ToastFn }) {
           </div>
         ))}
       </div>
+
+      {store.categories.length === 0 && (
+        <div className="rounded-2xl border border-[#e4e9e4] bg-white p-12 text-center text-sm text-[#718078]">
+          No categories created yet. Use the form above to add your first aisle or category.
+        </div>
+      )}
+
+      {showModal && (
+        <CategoryModal
+          close={() => setShowModal(false)}
+          onSubmit={handleAddCategory}
+          submitting={submitting}
+        />
+      )}
     </>
+  );
+}
+
+function CategoryModal({
+  close,
+  onSubmit,
+  submitting,
+}: {
+  close: () => void;
+  onSubmit: (name: string) => Promise<void>;
+  submitting: boolean;
+}) {
+  const [catName, setCatName] = useState("");
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center overflow-y-auto bg-[#1f2924]/40 px-5 py-8 backdrop-blur-xs">
+      <div className="w-full max-w-md rounded-3xl bg-white p-6 sm:p-8 shadow-2xl border border-[#e4e9e4]">
+        <div className="flex items-center justify-between border-b pb-4">
+          <div>
+            <h2 className="display-font text-2xl font-bold text-[#1f2924]">Add Category</h2>
+            <p className="text-xs text-[#718078] mt-1">Create a new product group or store section</p>
+          </div>
+          <button
+            onClick={close}
+            className="h-8 w-8 rounded-full border border-[#e4e9e4] text-lg text-[#718078] hover:bg-[#f0f4ef]"
+          >
+            ×
+          </button>
+        </div>
+
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            onSubmit(catName);
+          }}
+          className="mt-6 space-y-4"
+        >
+          <label className="block text-sm font-medium text-[#1f2924]">
+            Category Name
+            <input
+              required
+              autoFocus
+              value={catName}
+              onChange={(e) => setCatName(e.target.value)}
+              placeholder="e.g. Beverages, Bakery, Spices"
+              className="mt-1.5 w-full rounded-xl border border-[#dfe7df] bg-white px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#b9d8c2]"
+            />
+          </label>
+
+          <div className="mt-8 flex justify-end gap-3 border-t pt-4">
+            <button
+              type="button"
+              onClick={close}
+              className="rounded-xl border border-[#dfe7df] px-4 py-2.5 text-sm font-semibold text-[#718078] hover:bg-[#f0f4ef]"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="rounded-xl bg-[#226b4c] px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#1a553c] disabled:opacity-50"
+            >
+              {submitting ? "Adding..." : "Add category"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   );
 }
 
@@ -1250,15 +1479,10 @@ function Settings({ notify }: { notify: ToastFn }) {
       <Intro
         title="Settings"
         subtitle="Manage cloud backend connection, workspace settings, security, and credentials."
-        action={store.isLiveSupabase ? "Refresh Cloud Sync" : "Reset Demo Data"}
+        action="Refresh Cloud Sync"
         onAction={async () => {
-          if (store.isLiveSupabase) {
-            await store.refreshData();
-            notify("Data refreshed from Supabase");
-          } else {
-            store.resetDemo();
-            notify("Demo data reset");
-          }
+          await store.refreshData();
+          notify("Data refreshed from Supabase");
         }}
       />
 
@@ -1332,18 +1556,12 @@ function Settings({ notify }: { notify: ToastFn }) {
             </div>
             <div className="flex items-center gap-2">
               <span
-                className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ${
-                  store.isLiveSupabase
-                    ? "bg-[#e4f2e9] text-[#226b4c]"
-                    : "bg-amber-50 text-amber-700 border border-amber-200"
-                }`}
+                className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold bg-[#e4f2e9] text-[#226b4c]"
               >
                 <span
-                  className={`h-2 w-2 rounded-full ${
-                    store.isLiveSupabase ? "bg-[#226b4c] animate-pulse" : "bg-amber-500"
-                  }`}
+                  className="h-2 w-2 rounded-full bg-[#226b4c] animate-pulse"
                 />
-                {store.isLiveSupabase ? "Connected (Live Cloud Database)" : "Demo Mode (Local Storage)"}
+                Connected (Live Cloud Database)
               </span>
             </div>
           </div>
@@ -1429,12 +1647,24 @@ export default function DashboardShell({ active = "Dashboard" }: { active?: stri
   const [saleOpen, setSaleOpen] = useState(false);
   const [notice, setNotice] = useState("");
   const [exporting, setExporting] = useState(false);
-  const [username, setUsername] = useState("Store Manager");
+  const username = store.userProfile?.fullName || "Store Manager";
 
-  useEffect(() => {
-    const saved = localStorage.getItem("mallu-mart-username");
-    if (saved) setUsername(saved);
-  }, []);
+  // Show loading skeleton while initial data loads
+  if (store.isLoading) {
+    return (
+      <div className="app-grid flex min-h-screen">
+        <Sidebar active={active} />
+        <div className="min-w-0 flex-1">
+          <header className="sticky top-0 z-20 flex items-center justify-between border-b border-[#e4e9e4] bg-[#fbfcfa]/95 px-4 py-3 backdrop-blur md:static md:px-9 md:py-4">
+            <div className="flex items-center gap-3 text-sm text-[#87948c]">
+              <span>Loading workspace...</span>
+            </div>
+          </header>
+          <LoadingSkeleton />
+        </div>
+      </div>
+    );
+  }
 
   const notify = (message: string) => {
     setNotice(message);

@@ -3,7 +3,7 @@ import type { Product, Sale } from "@/lib/types";
 export type ReportPeriod = "today" | "7-days" | "30-days" | "this-month";
 export type ExportSnapshot = { products: Product[]; sales: Sale[]; inventoryValue: number; periodLabel: string; period: ReportPeriod };
 
-function inPeriod(date: string, period: ReportPeriod) {
+export function inPeriod(date: string, period: ReportPeriod) {
   const value = new Date(date);
   const now = new Date();
   if (period === "today") return value.toDateString() === now.toDateString();

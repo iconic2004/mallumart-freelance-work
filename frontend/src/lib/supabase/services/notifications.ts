@@ -12,13 +12,24 @@ interface SupabaseNotificationRow {
   created_at: string;
 }
 
+async function getCurrentUserId(): Promise<string | null> {
+  const supabase = createClient();
+  if (!supabase) return null;
+  const { data: { user } } = await supabase.auth.getUser();
+  return user?.id ?? null;
+}
+
 export async function fetchNotifications(limit = 50): Promise<LocalNotification[]> {
   const supabase = createClient();
   if (!supabase) return [];
 
+  const userId = await getCurrentUserId();
+  if (!userId) return [];
+
   const { data, error } = await supabase
     .from("notifications")
     .select("id, type, title, message, related_product_id, related_sale_id, is_read, created_at")
+    .eq("user_id", userId)
     .order("created_at", { ascending: false })
     .limit(limit);
 
@@ -43,10 +54,14 @@ export async function markNotificationRead(id: string): Promise<boolean> {
   const supabase = createClient();
   if (!supabase) return false;
 
+  const userId = await getCurrentUserId();
+  if (!userId) return false;
+
   const { error } = await supabase
     .from("notifications")
     .update({ is_read: true })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("user_id", userId);
 
   return !error;
 }
@@ -55,10 +70,14 @@ export async function markAllNotificationsRead(): Promise<boolean> {
   const supabase = createClient();
   if (!supabase) return false;
 
+  const userId = await getCurrentUserId();
+  if (!userId) return false;
+
   const { error } = await supabase
     .from("notifications")
     .update({ is_read: true })
-    .eq("is_read", false);
+    .eq("is_read", false)
+    .eq("user_id", userId);
 
   return !error;
 }
@@ -67,10 +86,13 @@ export async function clearNotifications(): Promise<boolean> {
   const supabase = createClient();
   if (!supabase) return false;
 
+  const userId = await getCurrentUserId();
+  if (!userId) return false;
+
   const { error } = await supabase
     .from("notifications")
     .delete()
-    .neq("id", "00000000-0000-0000-0000-000000000000");
+    .eq("user_id", userId);
 
   return !error;
 }

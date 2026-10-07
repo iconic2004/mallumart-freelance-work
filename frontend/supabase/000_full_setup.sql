@@ -237,17 +237,27 @@ create policy "Authenticated users can insert movements"
   to authenticated
   with check (true);
 
--- Notifications: Authenticated users can view & update
-create policy "Authenticated users can view notifications"
+-- Notifications: Users can only see and manage their OWN notifications
+create policy "Users can view own notifications"
   on public.notifications for select
   to authenticated
-  using (true);
+  using (auth.uid() = user_id);
 
-create policy "Authenticated users can manage notifications"
-  on public.notifications for all
+create policy "Users can update own notifications"
+  on public.notifications for update
   to authenticated
-  using (true)
-  with check (true);
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create policy "Users can delete own notifications"
+  on public.notifications for delete
+  to authenticated
+  using (auth.uid() = user_id);
+
+create policy "Users can insert own notifications"
+  on public.notifications for insert
+  to authenticated
+  with check (auth.uid() = user_id);
 
 -- ==========================================================
 -- 11. ATOMIC STORED PROCEDURE: RECORD SALE

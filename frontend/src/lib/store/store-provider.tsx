@@ -1,5 +1,4 @@
 "use client";
-/* eslint-disable react-hooks/set-state-in-effect */
 
 import { createContext, useContext, useEffect, useMemo, useState, useCallback } from "react";
 import type {
@@ -10,7 +9,6 @@ import type {
   PaymentMethod,
   Product,
   Sale,
-  SaleItem,
   UserProfile,
 } from "@/lib/types";
 import { createClient } from "@/lib/supabase/client";
@@ -34,18 +32,18 @@ export type StoreContextType = {
   updateProduct: (id: string, input: Partial<Product>) => Promise<void>;
   archiveProduct: (id: string) => Promise<void>;
   addStock: (id: string, quantity: number, notes?: string) => Promise<void>;
-  createCategory: (name: string) => Promise<void>;
-  renameCategory: (id: string, name: string) => Promise<void>;
-  deleteCategory: (id: string) => Promise<boolean>;
+  createCategory: (name: string) => Promise<{ ok: boolean; error?: string }>;
+  renameCategory: (id: string, name: string) => Promise<{ ok: boolean; error?: string }>;
+  deleteCategory: (id: string) => Promise<{ ok: boolean; error?: string }>;
   createSale: (lines: CartLine[], paymentMethod: PaymentMethod) => Promise<{ ok: boolean; message: string }>;
   markNotificationAsRead: (id: string) => Promise<void>;
   markAllNotificationsAsRead: () => Promise<void>;
   clearNotifications: () => Promise<void>;
-  resetDemo: () => void;
+
   refreshData: () => Promise<void>;
 };
 
-const storageKey = "mallu-mart-mock-store-v2";
+
 const StoreContext = createContext<StoreContextType | null>(null);
 
 const isToday = (date: string) => new Date(date).toDateString() === new Date().toDateString();
@@ -97,13 +95,6 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     async function initialize() {
       setIsLoading(true);
 
-      // Purge any legacy dummy mock cache
-      try {
-        localStorage.removeItem(storageKey);
-      } catch {
-        /* ignore */
-      }
-
       const supabase = createClient();
 
       if (supabase) {
@@ -114,9 +105,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           await loadSupabaseData();
         }
 
-        // Set up Supabase Realtime channel for live updates
+        // Set up Supabase Realtime channel for live updates (use unique topic per instance to avoid reuse errors on HMR/re-renders)
+        const channelName = `mallu-mart-realtime-${Math.random().toString(36).substring(2, 9)}`;
         channel = supabase
-          .channel("mallu-mart-realtime")
+          .channel(channelName)
           .on("postgres_changes", { event: "*", schema: "public", table: "products" }, () => {
             loadSupabaseData();
           })
@@ -230,27 +222,28 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const createCategory = async (name: string) => {
+  const createCategory = async (name: string): Promise<{ ok: boolean; error?: string }> => {
     const res = await services.createCategory(name);
     if (res.ok) {
       await loadSupabaseData();
     }
+    return res;
   };
 
-  const renameCategory = async (id: string, name: string) => {
+  const renameCategory = async (id: string, name: string): Promise<{ ok: boolean; error?: string }> => {
     const res = await services.renameCategory(id, name);
     if (res.ok) {
       await loadSupabaseData();
     }
+    return res;
   };
 
-  const deleteCategory = async (id: string): Promise<boolean> => {
+  const deleteCategory = async (id: string): Promise<{ ok: boolean; error?: string }> => {
     const res = await services.deleteCategory(id);
     if (res.ok) {
       await loadSupabaseData();
-      return true;
     }
-    return false;
+    return res;
   };
 
   const createSale = async (
@@ -281,13 +274,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     setNotifications([]);
   };
 
-  const resetDemo = () => {
-    setProducts([]);
-    setCategories([]);
-    setSales([]);
-    setMovements([]);
-    setNotifications([]);
-  };
+
 
   const store: StoreContextType = {
     products: products.filter((product) => product.isActive),
@@ -311,7 +298,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     markNotificationAsRead,
     markAllNotificationsAsRead,
     clearNotifications,
-    resetDemo,
+
     refreshData: loadSupabaseData,
   };
 
@@ -324,5 +311,4 @@ export function useStore() {
   return store;
 }
 
-export const useMockStore = useStore;
-export const MockStoreProvider = StoreProvider;
+
