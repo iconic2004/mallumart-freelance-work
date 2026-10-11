@@ -1,116 +1,77 @@
-# Mallu Mart - Supabase Backend Setup Guide
+# Mallu Mart - Supabase Backend Guide
 
-This guide walks you through setting up and running the Supabase backend for the **Mallu Mart** Inventory & Revenue Management application.
+How the database is set up, who can do what, and how to test it.
 
 ---
 
-## 1. Quick Setup (Under 3 Minutes)
+## 1. Setup and upgrades
 
-### Step 1: Create a Supabase Project
-1. Go to [supabase.com](https://supabase.com) and sign in (or create a free account).
-2. Click **New project**.
-3. Choose your organization, set a project name (e.g., `mallu-mart`), set a database password, and select your preferred region (e.g. `South Asia (Mumbai)`).
-4. Click **Create new project** and wait ~1 minute for it to provision.
-
-### Step 2: Run the Database Setup Script
-1. In your Supabase project dashboard, navigate to the **SQL Editor** tab (icon looks like `>_` on the left sidebar).
-2. Click **+ New query**.
-3. Open the file [`frontend/supabase/000_full_setup.sql`](./supabase/000_full_setup.sql) in your editor.
-4. Copy the entire content and paste it into the Supabase SQL Editor.
-5. Click **Run** (or press `Ctrl+Enter`).
-6. You should see `Success. No rows returned` — all tables, RLS policies, indexes, stored procedures, auth triggers, and seed products are now live!
-
-### Step 3: Configure Environment Variables
-1. In your Supabase dashboard, go to **Project Settings** (gear icon) -> **API** (or **Data API**).
-2. Find:
-   - **Project URL** (e.g., `https://xyzcompany.supabase.co`)
-   - **Project API Keys** -> `anon` / `public` key
-3. In the `frontend` folder, create a file named `.env.local` (copy from `.env.local.example`):
+1. **SQL Editor → New query**: paste all of [`supabase/000_full_setup.sql`](./supabase/000_full_setup.sql) and click **Run**.
+   - Safe to re-run. It also **upgrades an existing Mallu Mart database in place** without deleting data.
+   - Re-run it every time the file changes in the repo. The app and the database must be on the same version.
+2. Optional demo products: [`supabase/migrations/002_seed_data.sql`](./supabase/migrations/002_seed_data.sql).
+3. `frontend/.env.local` (never committed):
    ```env
    NEXT_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
-   NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+   NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-or-publishable-key
    ```
+4. `npm install`, then `npm run dev`.
 
-### Step 4: Launch the Application
-Run the Next.js development server:
-```bash
-cd frontend
-npm run dev
-```
-Open [http://localhost:3000](http://localhost:3000).
-
----
-
-## 2. Authentication & First User Setup
-
-1. On the login screen (`/login`), click **Register Store**.
-2. Enter:
-   - **Full Name**: e.g., `Unnikrishnan Nair`
-   - **Role**: `Store Owner / Admin`
-   - **Email**: e.g., `owner@mallumart.com`
-   - **Password**: your password (minimum 6 characters)
-3. Click **Create Store Account**.
-4. The database trigger `on_auth_user_created` will automatically populate your profile in `public.profiles` with the `owner` role.
-
-> [!TIP]
-> **Disable Email Confirmation for Local Testing**:
-> In Supabase Dashboard -> **Authentication** -> **Providers** -> **Email**, toggle off **"Confirm email"** if you want to log in instantly without waiting for an email verification link.
+Recommended Supabase settings:
+- **Authentication → Providers → Email**: Confirm email ON, minimum password length 8.
+- **Authentication → Multi-Factor**: TOTP (authenticator app) enabled. It is on by default.
+- **Authentication → Attack Protection**: enable *Leaked password protection* (blocks passwords found in data breaches; Pro plan).
+- Turn **Allow new users to sign up** off once the team has joined; add people later with *Invite user*.
 
 ---
 
-## 3. Database Architecture Overview
+## 2. Roles
 
-### Tables
+| Who | How they get access | What they can do |
+| :--- | :--- | :--- |
+| **Owner** | The first account ever registered; others can be promoted in Settings → Team. | Everything: products and prices, refunds, suppliers and purchase costs, categories, team, store details, imports, activity log, all cash closings. |
+| **Staff** | Registers, then an owner approves them in Settings → Team. | Sell (including credit/khata), receive deliveries, add customers and record their payments, close their own cash drawer, view stock, sales, reports and stock history. **Never sees cost prices, purchase costs or profit.** |
+| **Pending** | Any sign-up not yet approved. | Nothing. A "waiting for approval" screen; the database returns no data. |
 
-| Table | Description |
+**Two-factor authentication:** anyone can switch it on in Settings. Once it's on, the database gives that account no access until the 6-digit code has been entered, even with the correct password. The app asks for the code right after sign-in.
+
+---
+
+## 3. What the database enforces
+
+Clients (the browser) can only:
+- read their own profile (owners: every profile), categories, their notifications and the change feed;
+- create/rename categories and create/edit products (owners; **stock can't be edited directly**);
+- mark notifications read and delete them.
+
+Everything else goes through functions that check the caller's role:
+
+| Area | Functions |
 | :--- | :--- |
-| `public.profiles` | Store owner & staff profiles linked to `auth.users(id)`. Stores full name, role (`owner` or `staff`), store name, and phone. |
-| `public.categories` | Product aisle categories (`Grocery`, `Snacks`, `Beverages`, `Household`, `Personal Care`). |
-| `public.products` | Product inventory records with SKU, name, cost price, selling price, live stock quantity, and minimum alert thresholds. |
-| `public.sales` | Sales transactions header with invoice number (`MM-#####`), total revenue, cost, gross profit, and payment method (`Cash`, `UPI`, `Card`, `Other`). |
-| `public.sale_items` | Itemized line items for each sale with quantity, unit prices, and line totals. |
-| `public.inventory_movements` | Immutable audit log of all stock changes (`sale`, `purchase`, `adjustment`, `return`, `damage`). |
-| `public.notifications` | Real-time system alerts for low stock levels, out-of-stock events, stock additions, and recorded sales. |
+| Selling | `record_sale(items, method, customer)`: atomic; locks stock rows; whole numbers for pieces, up to 3 decimals for kg/L; GST from the product's rate (prices include GST); Credit needs a customer and adds to their khata. |
+| Refunds (owner) | `refund_sale(sale, items, reason)`: partial or full void; reason required; returns stock; reduces khata for credit sales; sequential `RF-000001` numbers. |
+| Stock | `adjust_stock(...)`: purchase (staff and owner; supplier optional; unit cost and "update cost price" owner only), return, damage, correction (owner). |
+| Customers | `save_customer`, `record_customer_payment`, `get_customers`, `get_customer_ledger`. |
+| Suppliers | `save_supplier` (owner), `get_suppliers`, `get_reorder_list`. |
+| Cash | `get_cash_summary`, `close_cash` (once per person per day), `get_cash_closings`. |
+| Reports | `sales_report` (net of refunds, GST by rate), `daily_sales`, `get_sales`, `get_stock_history`. |
+| Admin (owner) | `set_member_access`, `delete_category`, `save_store_settings`, `import_products`, `get_audit_log`. |
+
+Cost and profit fields come back as `null` for staff from every read function, so staff can't see margins even by calling the API directly.
+
+**Activity log:** triggers record product creation and edits (price changes show old → new), archiving, imports, category changes, team approvals and role changes, store detail changes, supplier changes, refunds, khata payments and cash closings, with who did it and when.
+
+**Notifications:** low/out-of-stock alerts go to everyone, only when stock crosses the threshold. Sale and stock-change notices go to owners.
+
+**Realtime:** products, sales and stock can't be streamed (clients can't read them), so a trigger writes a tiny row to `store_events` on every change. Open browsers listen to that, plus categories, notifications and profiles, and refetch.
 
 ---
 
-## 4. Stored Procedures (Atomic Transactions)
+## 4. Testing
 
-### 1. `record_sale(p_items jsonb, p_payment_method text)`
-- **Concurrency & Row Locking**: Uses PostgreSQL `FOR UPDATE` row-level locks on product rows to avoid race conditions or overselling.
-- **Validation**: Ensures requested quantity is available in stock.
-- **Atomic Operations**:
-  - Calculates sale totals and gross profit server-side.
-  - Inserts the `sales` record with a unique invoice code (e.g. `MM-9A2F1`).
-  - Inserts all line items into `sale_items`.
-  - Decrements each product's `stock_quantity`.
-  - Logs negative quantity movements into `inventory_movements` (type `sale`).
-  - Automatically triggers low stock / out-of-stock notifications if threshold is crossed.
-- **Rollback**: If any single item lacks stock, the entire transaction rolls back cleanly without partial deduction.
+| Command | What it does |
+| :--- | :--- |
+| `npm test` | Unit tests for app logic (date ranges, quantities, prices, error messages). |
+| `npm run test:db` | Runs `000_full_setup.sql` twice, then [`tests/smoke_test.sql`](./supabase/tests/smoke_test.sql), in an in-memory PostgreSQL (PGlite) with a stand-in for Supabase's auth schema. No network needed. |
 
-### 2. `adjust_stock(p_product_id uuid, p_quantity integer, p_movement_type text, p_notes text)`
-- Locks product row and increments or decrements quantity safely.
-- Appends an audit entry in `inventory_movements`.
-- Creates a `STOCK_ADDED` notification.
-
-### 3. `handle_new_user()`
-- An `AFTER INSERT` trigger on `auth.users` that creates a corresponding profile row in `public.profiles` automatically whenever a user signs up.
-
----
-
-## 5. Realtime Synchronization
-
-Realtime publication is enabled on:
-- `products`
-- `categories`
-- `sales`
-- `inventory_movements`
-- `notifications`
-
-The Next.js frontend subscribes to these channels so any sale or stock adjustment made on one device (e.g., POS terminal) automatically updates the dashboard and stock counters on all other staff screens in real time.
-
----
-
-## 6. Offline / Demo Mode Fallback
-
-If `NEXT_PUBLIC_SUPABASE_URL` or `NEXT_PUBLIC_SUPABASE_ANON_KEY` are not set, the webapp automatically falls back to an offline **Demo Mode** using browser `localStorage`. This allows designers and clients to preview and interact with the UI without configuring a database.
+On the real project, paste `supabase/tests/smoke_test.sql` into the SQL Editor (when nobody is billing). It creates throwaway owner, staff and pending accounts, runs about 70 permission and workflow checks, returns one row per check, and rolls everything back, including the invoice and refund counters.

@@ -10,7 +10,7 @@ export default function LoginPage() {
   const router = useRouter();
   const [mode, setMode] = useState<"signin" | "signup" | "forgot">("signin");
   const [fullName, setFullName] = useState("");
-  const [role, setRole] = useState<"owner" | "staff">("owner");
+  const isConfigured = Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -59,7 +59,7 @@ export default function LoginPage() {
         router.push("/dashboard");
       }
     } else {
-      const res = await signUp(email, password, fullName, role);
+      const res = await signUp(email, password, fullName);
       if (res.error) {
         setError(res.error.message);
         setLoading(false);
@@ -68,7 +68,7 @@ export default function LoginPage() {
           localStorage.setItem("mallu-mart-username", fullName.trim());
           router.push("/dashboard");
         } else {
-          setSuccess("Account created successfully! If email confirmation is enabled in your Supabase project, check your inbox. Otherwise you can sign in now.");
+          setSuccess("Account created. Confirm your email if asked, then sign in. New staff accounts can see store data once the owner approves them.");
           setMode("signin");
           setLoading(false);
         }
@@ -104,7 +104,7 @@ export default function LoginPage() {
             {mode === "signin"
               ? "Sign in to check today's live store pulse."
               : mode === "signup"
-              ? "Register your store owner or staff account."
+              ? "The first account becomes the store owner. Later sign-ups need the owner's approval."
               : "Enter your store account email to receive a recovery link."}
           </p>
         </div>
@@ -136,7 +136,7 @@ export default function LoginPage() {
                 mode === "signup" ? "bg-white text-[#1f2924] shadow-sm font-semibold" : "text-[#718078] hover:text-[#1f2924]"
               }`}
             >
-              Register Store
+              Register
             </button>
           </div>
         ) : (
@@ -170,17 +170,6 @@ export default function LoginPage() {
                 />
               </label>
 
-              <label className="block text-sm font-medium text-[#1f2924]">
-                Store Role
-                <select
-                  value={role}
-                  onChange={(event) => setRole(event.target.value as "owner" | "staff")}
-                  className="mt-1.5 w-full rounded-xl border border-[#dfe7df] bg-white px-4 py-3 text-sm outline-none focus:border-[#226b4c] focus:ring-2 focus:ring-[#b9d8c2]"
-                >
-                  <option value="owner">Store Owner / Admin</option>
-                  <option value="staff">Store Staff / Billing Cashier</option>
-                </select>
-              </label>
             </>
           )}
 
@@ -218,12 +207,13 @@ export default function LoginPage() {
               </div>
               <input
                 required
-                minLength={6}
+                minLength={mode === "signup" ? 8 : 6}
                 type="password"
+                autoComplete={mode === "signup" ? "new-password" : "current-password"}
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 className="mt-1.5 w-full rounded-xl border border-[#dfe7df] bg-white px-4 py-3 text-sm outline-none focus:border-[#226b4c] focus:ring-2 focus:ring-[#b9d8c2]"
-                placeholder="•••••••• (at least 6 characters)"
+                placeholder={mode === "signup" ? "At least 8 characters" : "••••••••"}
               />
             </div>
           )}
@@ -249,21 +239,26 @@ export default function LoginPage() {
               : mode === "signin"
               ? "Sign in to Store"
               : mode === "signup"
-              ? "Create Store Account"
+              ? "Create Account"
               : "Send Recovery Link"}
           </button>
         </form>
 
-        <div className="mt-8 border-t border-[#e4e9e4] pt-6 text-center">
-          <Link
-            href="/dashboard"
-            onClick={() => localStorage.setItem("mallu-mart-username", "Demo Manager")}
-            className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#226b4c] hover:underline"
-          >
-            <span>Continue to Demo Workspace (Offline Preview)</span>
-            <span>→</span>
-          </Link>
-        </div>
+        {!isConfigured && (
+          <div className="mt-8 border-t border-[#e4e9e4] pt-6 text-center">
+            <p className="mb-2 text-xs text-[#c25e4a]">
+              Supabase is not configured, so sign-in is unavailable and no store data can load.
+            </p>
+            <Link
+              href="/dashboard"
+              onClick={() => localStorage.setItem("mallu-mart-username", "Demo Manager")}
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#226b4c] hover:underline"
+            >
+              <span>Preview the empty workspace</span>
+              <span>→</span>
+            </Link>
+          </div>
+        )}
       </div>
     </main>
   );

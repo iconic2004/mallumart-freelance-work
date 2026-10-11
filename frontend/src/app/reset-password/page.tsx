@@ -18,8 +18,8 @@ export default function ResetPasswordPage() {
     setError("");
     setSuccess("");
 
-    if (password.length < 6) {
-      setError("Password must be at least 6 characters long.");
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters long.");
       return;
     }
 
@@ -33,7 +33,12 @@ export default function ResetPasswordPage() {
     try {
       const res = await updatePassword(password);
       if (res.error) {
-        setError(res.error.message);
+        // Opening this page without a valid recovery link means there is no session to update.
+        setError(
+          /session|jwt|token/i.test(res.error.message)
+            ? "This reset link is invalid or has expired. Request a new one from the login page."
+            : res.error.message
+        );
       } else {
         setSuccess("New password created successfully! Redirecting to your dashboard...");
         setTimeout(() => {
@@ -63,7 +68,7 @@ export default function ResetPasswordPage() {
 
         <div className="mt-8">
           <div className="mb-2 text-xs font-semibold uppercase tracking-[.18em] text-[#6a987b]">
-            Owner Security
+            Account Security
           </div>
           <h1 className="display-font text-3xl font-bold text-[#1f2924]">
             Create new password.
@@ -78,12 +83,13 @@ export default function ResetPasswordPage() {
             New Password
             <input
               required
-              minLength={6}
+              minLength={8}
               type="password"
+              autoComplete="new-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className="mt-1.5 w-full rounded-xl border border-[#dfe7df] bg-white px-4 py-3 text-sm outline-none focus:border-[#226b4c] focus:ring-2 focus:ring-[#b9d8c2]"
-              placeholder="•••••••• (min 6 characters)"
+              placeholder="At least 8 characters"
             />
           </label>
 
@@ -91,8 +97,9 @@ export default function ResetPasswordPage() {
             Confirm New Password
             <input
               required
-              minLength={6}
+              minLength={8}
               type="password"
+              autoComplete="new-password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               className="mt-1.5 w-full rounded-xl border border-[#dfe7df] bg-white px-4 py-3 text-sm outline-none focus:border-[#226b4c] focus:ring-2 focus:ring-[#b9d8c2]"

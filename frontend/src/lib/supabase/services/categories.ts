@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/client";
 import type { Category } from "@/lib/types";
+import { friendlyError } from "./errors";
 
 export async function fetchCategories(): Promise<Category[]> {
   const supabase = createClient();
@@ -39,7 +40,7 @@ export async function createCategory(name: string): Promise<{ ok: boolean; data?
       .single();
 
     if (error) {
-      return { ok: false, error: error.message };
+      return { ok: false, error: friendlyError(error) };
     }
 
     return {
@@ -61,13 +62,17 @@ export async function renameCategory(id: string, name: string): Promise<{ ok: bo
   if (!supabase) return { ok: false, error: "Supabase client unavailable" };
 
   try {
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("categories")
       .update({ name: name.trim() })
-      .eq("id", id);
+      .eq("id", id)
+      .select("id");
 
     if (error) {
-      return { ok: false, error: error.message };
+      return { ok: false, error: friendlyError(error) };
+    }
+    if (!data?.length) {
+      return { ok: false, error: "Only the store owner can rename categories." };
     }
 
     return { ok: true };
@@ -82,21 +87,9 @@ export async function deleteCategory(id: string): Promise<{ ok: boolean; error?:
   if (!supabase) return { ok: false, error: "Supabase client unavailable" };
 
   try {
-    // Check if any product is assigned to this category
-    const { count, error: countErr } = await supabase
-      .from("products")
-      .select("id", { count: "exact", head: true })
-      .eq("category_id", id)
-      .eq("is_active", true);
-
-    if (countErr) return { ok: false, error: countErr.message };
-    if (count && count > 0) {
-      return { ok: false, error: "Cannot delete category with active products." };
-    }
-
-    const { error } = await supabase.from("categories").delete().eq("id", id);
-    if (error) return { ok: false, error: error.message };
-
+    // Server-side: owner check, blocks if active products remain, detaches archived ones.
+    const { error } = await supabase.rpc("delete_category", { p_category_id: id });
+    if (error) return { ok: false, error: friendlyError(error) };
     return { ok: true };
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Network error";

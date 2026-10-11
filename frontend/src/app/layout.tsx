@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import TimeGreeting from "@/components/time-greeting";
 import { StoreProvider } from "@/lib/store/store-provider";
 
 export const metadata: Metadata = {
@@ -13,7 +12,6 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="en">
       <body>
         <StoreProvider>
-          <TimeGreeting />
           {children}
         </StoreProvider>
       </body>

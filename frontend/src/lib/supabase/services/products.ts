@@ -1,176 +1,107 @@
 import { createClient } from "@/lib/supabase/client";
-import type { Product } from "@/lib/types";
+import type { ActionResult, ImportResult, ImportRow, Product, ReorderItem, StockMovementType, Unit } from "@/lib/types";
+import { friendlyError } from "./errors";
+import { callRpc, toNumber, toNumberOrNull, tryRpc } from "./rpc";
 
-interface SupabaseProductRow {
+interface ProductRow {
   id: string;
   name: string;
   sku: string;
+  barcode: string | null;
   category_id: string | null;
+  category_name: string | null;
   description: string | null;
-  cost_price: number;
-  selling_price: number;
-  stock_quantity: number;
-  minimum_stock: number;
+  cost_price: number | string | null;
+  selling_price: number | string;
+  stock_quantity: number | string;
+  minimum_stock: number | string;
+  unit: Unit;
+  gst_rate: number | string;
+  hsn_code: string;
   image_url: string | null;
   is_active: boolean;
-  categories?: { name: string } | null;
 }
 
+const toProduct = (row: ProductRow): Product => ({
+  id: row.id,
+  name: row.name,
+  sku: row.sku,
+  barcode: row.barcode,
+  category: row.category_name || "Uncategorised",
+  categoryId: row.category_id || undefined,
+  unit: row.unit ?? "pcs",
+  gstRate: toNumber(row.gst_rate),
+  hsnCode: row.hsn_code ?? "",
+  costPrice: toNumberOrNull(row.cost_price),
+  sellingPrice: toNumber(row.selling_price),
+  stockQuantity: toNumber(row.stock_quantity),
+  minimumStock: toNumber(row.minimum_stock),
+  isActive: row.is_active,
+  imageUrl: row.image_url,
+  description: row.description,
+});
+
+// Products are read through get_products(), which hides cost prices from staff.
 export async function fetchProducts(): Promise<Product[]> {
-  const supabase = createClient();
-  if (!supabase) return [];
-
   try {
-    const { data, error } = await supabase
-      .from("products")
-      .select(`
-        id,
-        name,
-        sku,
-        category_id,
-        description,
-        cost_price,
-        selling_price,
-        stock_quantity,
-        minimum_stock,
-        image_url,
-        is_active,
-        categories:category_id ( name )
-      `)
-      .eq("is_active", true)
-      .order("name", { ascending: true });
-
-    if (error) {
-      console.error("Error fetching products:", error.message);
-      return [];
-    }
-
-    return (data as unknown as SupabaseProductRow[]).map((row) => ({
-      id: row.id,
-      name: row.name,
-      sku: row.sku,
-      category: row.categories?.name || "General",
-      categoryId: row.category_id || undefined,
-      costPrice: Number(row.cost_price),
-      sellingPrice: Number(row.selling_price),
-      stockQuantity: Number(row.stock_quantity),
-      minimumStock: Number(row.minimum_stock),
-      isActive: row.is_active,
-      imageUrl: row.image_url,
-      description: row.description,
-    }));
+    return ((await callRpc<ProductRow[]>("get_products")) ?? []).map(toProduct);
   } catch (err) {
     console.error("Failed to fetch products:", err);
     return [];
   }
 }
 
-export async function createProduct(
-  input: Omit<Product, "id" | "isActive">
-): Promise<{ ok: boolean; data?: Product; error?: string }> {
+const editableColumns = (input: Partial<Product>) => {
+  const columns: Record<string, unknown> = {};
+  if (input.name !== undefined) columns.name = input.name.trim();
+  if (input.sku !== undefined) columns.sku = input.sku.trim().toUpperCase();
+  if (input.barcode !== undefined) columns.barcode = input.barcode?.trim() || null;
+  if (input.costPrice !== undefined && input.costPrice !== null) columns.cost_price = input.costPrice;
+  if (input.sellingPrice !== undefined) columns.selling_price = input.sellingPrice;
+  if (input.minimumStock !== undefined) columns.minimum_stock = input.minimumStock;
+  if (input.unit !== undefined) columns.unit = input.unit;
+  if (input.gstRate !== undefined) columns.gst_rate = input.gstRate;
+  if (input.hsnCode !== undefined) columns.hsn_code = input.hsnCode.trim();
+  if (input.isActive !== undefined) columns.is_active = input.isActive;
+  if (input.description !== undefined) columns.description = input.description;
+  if (input.imageUrl !== undefined) columns.image_url = input.imageUrl;
+  if (input.categoryId !== undefined) columns.category_id = input.categoryId || null;
+  return columns;
+};
+
+export async function createProduct(input: Omit<Product, "id" | "isActive">): Promise<ActionResult> {
   const supabase = createClient();
   if (!supabase) return { ok: false, error: "Supabase client unavailable" };
 
   try {
-    // Resolve category ID from category name
-    let categoryId = input.categoryId;
-    if (!categoryId && input.category) {
-      const { data: cat } = await supabase
-        .from("categories")
-        .select("id")
-        .eq("name", input.category)
-        .single();
-      if (cat) categoryId = cat.id;
-    }
+    // Opening stock is written to the stock log by a database trigger.
+    const { error } = await supabase.from("products").insert({
+      ...editableColumns(input),
+      cost_price: input.costPrice ?? 0,
+      stock_quantity: input.stockQuantity,
+      is_active: true,
+      description: input.description || "",
+      image_url: input.imageUrl || null,
+    });
 
-    const { data, error } = await supabase
-      .from("products")
-      .insert({
-        name: input.name.trim(),
-        sku: input.sku.trim().toUpperCase(),
-        category_id: categoryId || null,
-        cost_price: input.costPrice,
-        selling_price: input.sellingPrice,
-        stock_quantity: input.stockQuantity,
-        minimum_stock: input.minimumStock,
-        is_active: true,
-        description: input.description || "",
-        image_url: input.imageUrl || null,
-      })
-      .select(`
-        id,
-        name,
-        sku,
-        category_id,
-        description,
-        cost_price,
-        selling_price,
-        stock_quantity,
-        minimum_stock,
-        image_url,
-        is_active,
-        categories:category_id ( name )
-      `)
-      .single();
-
-    if (error) {
-      return { ok: false, error: error.message };
-    }
-
-    const row = data as unknown as SupabaseProductRow;
-    return {
-      ok: true,
-      data: {
-        id: row.id,
-        name: row.name,
-        sku: row.sku,
-        category: row.categories?.name || input.category,
-        categoryId: row.category_id || undefined,
-        costPrice: Number(row.cost_price),
-        sellingPrice: Number(row.selling_price),
-        stockQuantity: Number(row.stock_quantity),
-        minimumStock: Number(row.minimum_stock),
-        isActive: row.is_active,
-        imageUrl: row.image_url,
-        description: row.description,
-      },
-    };
+    if (error) return { ok: false, error: friendlyError(error) };
+    return { ok: true };
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Network error";
     return { ok: false, error: `Product creation failed (${msg}).` };
   }
 }
 
-export async function updateProduct(
-  id: string,
-  input: Partial<Product>
-): Promise<{ ok: boolean; error?: string }> {
+// Stock is deliberately not editable here; it only changes through adjust_stock,
+// record_sale and refund_sale so every change is in the stock log.
+export async function updateProduct(id: string, input: Partial<Omit<Product, "stockQuantity">>): Promise<ActionResult> {
   const supabase = createClient();
   if (!supabase) return { ok: false, error: "Supabase client unavailable" };
 
   try {
-    const updates: Record<string, unknown> = {};
-    if (input.name !== undefined) updates.name = input.name.trim();
-    if (input.sku !== undefined) updates.sku = input.sku.trim().toUpperCase();
-    if (input.costPrice !== undefined) updates.cost_price = input.costPrice;
-    if (input.sellingPrice !== undefined) updates.selling_price = input.sellingPrice;
-    if (input.stockQuantity !== undefined) updates.stock_quantity = input.stockQuantity;
-    if (input.minimumStock !== undefined) updates.minimum_stock = input.minimumStock;
-    if (input.isActive !== undefined) updates.is_active = input.isActive;
-    if (input.description !== undefined) updates.description = input.description;
-    if (input.imageUrl !== undefined) updates.image_url = input.imageUrl;
-
-    if (input.category) {
-      const { data: cat } = await supabase
-        .from("categories")
-        .select("id")
-        .eq("name", input.category)
-        .single();
-      if (cat) updates.category_id = cat.id;
-    }
-
-    const { error } = await supabase.from("products").update(updates).eq("id", id);
-    if (error) return { ok: false, error: error.message };
+    const { data, error } = await supabase.from("products").update(editableColumns(input)).eq("id", id).select("id");
+    if (error) return { ok: false, error: friendlyError(error) };
+    if (!data?.length) return { ok: false, error: "You do not have permission to edit this product." };
     return { ok: true };
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Network error";
@@ -178,48 +109,44 @@ export async function updateProduct(
   }
 }
 
-export async function archiveProduct(id: string): Promise<{ ok: boolean; error?: string }> {
-  const supabase = createClient();
-  if (!supabase) return { ok: false, error: "Supabase client unavailable" };
-
-  try {
-    const { error } = await supabase
-      .from("products")
-      .update({ is_active: false, updated_at: new Date().toISOString() })
-      .eq("id", id);
-
-    if (error) return { ok: false, error: error.message };
-    return { ok: true };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : "Network error";
-    return { ok: false, error: `Product archive failed (${msg}).` };
-  }
+export async function archiveProduct(id: string): Promise<ActionResult> {
+  return updateProduct(id, { isActive: false });
 }
 
-export async function adjustProductStock(
-  productId: string,
-  quantity: number,
-  movementType: "purchase" | "adjustment" | "return" | "damage" = "purchase",
-  notes: string = ""
-): Promise<{ ok: boolean; error?: string; data?: unknown }> {
-  const supabase = createClient();
-  if (!supabase) return { ok: false, error: "Supabase client unavailable" };
+export type StockAdjustment = {
+  quantity: number;
+  type: StockMovementType;
+  notes?: string;
+  supplierId?: string | null;
+  // Owner only: the price paid per unit, and whether it becomes the new cost price.
+  unitCost?: number | null;
+  updateCost?: boolean;
+};
 
-  try {
-    const { data, error } = await supabase.rpc("adjust_stock", {
-      p_product_id: productId,
-      p_quantity: quantity,
-      p_movement_type: movementType,
-      p_notes: notes,
-    });
+export async function adjustProductStock(productId: string, adjustment: StockAdjustment): Promise<ActionResult> {
+  const result = await tryRpc("adjust_stock", {
+    p_product_id: productId,
+    p_quantity: adjustment.quantity,
+    p_movement_type: adjustment.type,
+    p_notes: adjustment.notes ?? "",
+    p_supplier_id: adjustment.supplierId || null,
+    p_unit_cost: adjustment.unitCost ?? null,
+    p_update_cost: adjustment.updateCost ?? false,
+  });
+  return { ok: result.ok, error: result.error };
+}
 
-    if (error) {
-      return { ok: false, error: error.message };
-    }
+export function importProducts(rows: ImportRow[]) {
+  return callRpc<ImportResult>("import_products", { p_rows: rows });
+}
 
-    return { ok: true, data };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : "Network error";
-    return { ok: false, error: `Stock adjustment failed (${msg}).` };
-  }
+export async function fetchReorderList(): Promise<ReorderItem[]> {
+  const rows = await callRpc<Record<string, unknown>[]>("get_reorder_list");
+  return rows.map((row) => ({
+    ...(row as unknown as ReorderItem),
+    stock: toNumber(row.stock),
+    minimum: toNumber(row.minimum),
+    suggestedQuantity: toNumber(row.suggestedQuantity),
+    lastUnitCost: toNumberOrNull(row.lastUnitCost),
+  }));
 }

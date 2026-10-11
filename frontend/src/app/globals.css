@@ -48,3 +48,15 @@ button, input, select { font: inherit; }
   .app-grid > aside.fixed { animation: mobile-drawer-in 180ms ease-out both; }
   .app-grid > button.fixed { animation: mobile-backdrop-in 180ms ease-out both; }
 }
+
+/* Receipts: on screen they sit inside the receipt dialog; when printing, only
+   the receipt is printed, at thermal-printer width. */
+.receipt-58 { max-width: 48mm; }
+.receipt-80 { max-width: 72mm; }
+
+@media print {
+  @page { margin: 3mm; size: auto; }
+  body * { visibility: hidden; }
+  .print-receipt, .print-receipt * { visibility: visible; }
+  .print-receipt { position: absolute; left: 0; top: 0; }
+}

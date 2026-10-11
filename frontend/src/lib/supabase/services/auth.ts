@@ -12,12 +12,9 @@ export async function signIn(email: string, password: string) {
   return await supabase.auth.signInWithPassword({ email, password });
 }
 
-export async function signUp(
-  email: string,
-  password: string,
-  fullName: string,
-  role: "owner" | "staff" = "owner"
-) {
+// The role is assigned by the database (first account = owner, others = pending staff),
+// never by the browser.
+export async function signUp(email: string, password: string, fullName: string) {
   const supabase = createClient();
   if (!supabase) {
     return {
@@ -30,8 +27,7 @@ export async function signUp(
     password,
     options: {
       data: {
-        full_name: fullName,
-        role,
+        full_name: fullName.trim(),
       },
     },
   });
@@ -70,6 +66,18 @@ export async function updatePassword(newPassword: string) {
   });
 }
 
+// Re-checks the current password before setting a new one, so an unattended
+// signed-in browser cannot be used to take over the account.
+export async function changePassword(currentPassword: string, newPassword: string) {
+  const supabase = createClient();
+  if (!supabase) return { error: new Error("Supabase is not configured.") };
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user?.email) return { error: new Error("You are signed out. Please sign in again.") };
+  const check = await supabase.auth.signInWithPassword({ email: user.email, password: currentPassword });
+  if (check.error) return { error: new Error("Current password is incorrect.") };
+  return await supabase.auth.updateUser({ password: newPassword });
+}
+
 export async function getCurrentUser() {
   const supabase = createClient();
   if (!supabase) return null;
@@ -85,7 +93,7 @@ export async function getCurrentProfile(): Promise<UserProfile | null> {
 
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, user_id, full_name, role, store_name, phone, created_at")
+    .select("id, user_id, full_name, role, approved, store_name, phone, created_at")
     .eq("user_id", user.id)
     .single();
 
@@ -94,7 +102,8 @@ export async function getCurrentProfile(): Promise<UserProfile | null> {
       id: user.id,
       userId: user.id,
       fullName: (user.user_metadata?.full_name as string) || user.email?.split("@")[0] || "Staff",
-      role: (user.user_metadata?.role as "owner" | "staff") || "owner",
+      role: "staff",
+      approved: false,
       storeName: "Mallu Mart",
     };
   }
@@ -104,6 +113,7 @@ export async function getCurrentProfile(): Promise<UserProfile | null> {
     userId: data.user_id,
     fullName: data.full_name || user.email?.split("@")[0] || "Staff",
     role: data.role as "owner" | "staff",
+    approved: Boolean(data.approved),
     storeName: data.store_name,
     phone: data.phone,
     createdAt: data.created_at,
