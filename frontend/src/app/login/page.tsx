@@ -166,7 +166,7 @@ export default function LoginPage() {
                   value={fullName}
                   onChange={(event) => setFullName(event.target.value)}
                   className="mt-1.5 w-full rounded-xl border border-[#dfe7df] bg-white px-4 py-3 text-sm outline-none focus:border-[#226b4c] focus:ring-2 focus:ring-[#b9d8c2]"
-                  placeholder="Unnikrishnan Nair"
+                  placeholder="Store Manager"
                 />
               </label>
 

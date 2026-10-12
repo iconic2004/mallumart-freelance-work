@@ -151,6 +151,13 @@ export function SaleModal({
             })}
           </div>
         )}
+        {query.trim() && results.length === 0 && (
+          <div className="absolute left-0 right-0 top-full z-10 mt-1 rounded-xl border border-[#e4e9e4] bg-white px-4 py-3 text-sm text-[#718078] shadow-xl">
+            {products.length === 0
+              ? "No products are loaded. Add products under Inventory first, or refresh the page."
+              : `No product matches "${query.trim()}". Check the spelling, or add it under Inventory.`}
+          </div>
+        )}
       </div>
 
       <div className="mt-4 max-h-64 space-y-2 overflow-y-auto">
