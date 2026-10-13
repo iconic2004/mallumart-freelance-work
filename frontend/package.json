@@ -11,12 +11,12 @@
     "test:db": "node supabase/tests/run-local.mjs"
   },
   "dependencies": {
-    "@supabase/ssr": "^0.12.6",
-    "@supabase/supabase-js": "^2.115.0",
-    "lucide-react": "^1.41.0",
-    "next": "^16.3.8",
-    "react": "19.2.8",
-    "react-dom": "19.2.8",
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.117.3",
+    "lucide-react": "^1.54.0",
+    "next": "^16.4.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
     "recharts": "^3.10.1",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
