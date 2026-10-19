@@ -11,24 +11,24 @@
     "test:db": "node supabase/tests/run-local.mjs"
   },
   "dependencies": {
-    "@supabase/ssr": "^0.12.6",
-    "@supabase/supabase-js": "^2.115.0",
-    "lucide-react": "^1.41.0",
-    "next": "^16.3.8",
-    "react": "19.2.8",
-    "react-dom": "19.2.8",
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.118.0",
+    "lucide-react": "^1.58.0",
+    "next": "^16.4.2",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
     "recharts": "^3.10.1",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "^0.5.8",
+    "@electric-sql/pglite": "^0.5.10",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "babel-plugin-react-compiler": "1.0.0",
     "eslint": "^9",
-    "eslint-config-next": "^16.3.8",
+    "eslint-config-next": "^16.4.2",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^3.2.7"
